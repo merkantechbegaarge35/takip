@@ -540,6 +540,9 @@ function applyExcelStyles(ws, data) {
 function exportSupplierXlsx(supplierName, items, job) {
   const wb = XLSX.utils.book_new();
   
+  // ✅ Temin edilmemiş ürünleri filtrele
+  const unsuppliedItems = items.filter(it => !it.supplied);
+  
   // Başlık ve bilgi satırları
   const aoa = [
     [`${supplierName} - Sipariş Listesi`],
@@ -551,9 +554,15 @@ function exportSupplierXlsx(supplierName, items, job) {
     ['Tedarikçi','Ürün','Açıklama','Adet','Sipariş No','Müşteri']
   ];
   
-  items.forEach(it => {
+  // ✅ Sadece temin edilmemiş ürünleri ekle
+  unsuppliedItems.forEach(it => {
     aoa.push([supplierName, it.product || '', it.description || '', it.qty || 1, job.orderNumber || '', job.customerName || '']);
   });
+  
+  // ✅ Eğer temin edilecek ürün yoksa uyarı ekle
+  if(unsuppliedItems.length === 0) {
+    aoa.push(['', 'Tüm ürünler temin edildi', '', '', '', '']);
+  }
   
   const ws = XLSX.utils.aoa_to_sheet(aoa);
   ws['!cols'] = [{wch:18},{wch:30},{wch:35},{wch:10},{wch:15},{wch:25}];
@@ -617,19 +626,27 @@ function exportSupplierXlsx(supplierName, items, job) {
 function exportAllSuppliersXlsx(ordersBySupplier, job, sheetName = 'Malzeme') {
   const wb = XLSX.utils.book_new();
   
-  for(const s of Object.keys(ordersBySupplier)) {
-    const items = ordersBySupplier[s];
-    const aoa = [
-      [`${s} - Sipariş Listesi`],
-      [''],
-      ['Sipariş No:', job.orderNumber || '-'],
-      ['Müşteri:', job.customerName || '-'],
-      ['Tarih:', new Date().toLocaleDateString('tr-TR')],
-      [''],
-      ['Tedarikçi','Ürün','Açıklama','Adet','Sipariş No','Müşteri']
-    ];
-    
-    items.forEach(it => aoa.push([s, it.product || '', it.description || '', it.qty || 1, job.orderNumber || '', job.customerName || '']));
+for(const s of Object.keys(ordersBySupplier)) {
+  const items = ordersBySupplier[s];
+  
+  // ✅ Temin edilmemiş ürünleri filtrele
+  const unsuppliedItems = items.filter(it => !it.supplied);
+  
+  // ✅ Eğer tedarikçinin tüm ürünleri temin edildiyse bu sheet'i atlayabiliriz
+  if(unsuppliedItems.length === 0) continue;
+  
+  const aoa = [
+    [`${s} - Sipariş Listesi`],
+    [''],
+    ['Sipariş No:', job.orderNumber || '-'],
+    ['Müşteri:', job.customerName || '-'],
+    ['Tarih:', new Date().toLocaleDateString('tr-TR')],
+    [''],
+    ['Tedarikçi','Ürün','Açıklama','Adet','Sipariş No','Müşteri']
+  ];
+  
+  // ✅ Sadece temin edilmemiş ürünleri ekle
+  unsuppliedItems.forEach(it => aoa.push([s, it.product || '', it.description || '', it.qty || 1, job.orderNumber || '', job.customerName || '']));
     
     const ws = XLSX.utils.aoa_to_sheet(aoa);
     ws['!cols'] = [{wch:18},{wch:30},{wch:35},{wch:10},{wch:15},{wch:25}];
@@ -1268,7 +1285,7 @@ const visibleJobs = React.useMemo(() => {
           <>
 <div className="flex flex-col md:flex-row md:items-center gap-4 mb-6">
               <div className="flex gap-2">
-                <button onClick={() => setShowCreateModal(true)} className="px-6 py-3 bg-green-500 text-white rounded-lg flex items-center gap-2"><Icon type="plus" /> Yeni İş Oluştur</button>
+                <button onClick={() => setShowCreateModal(true)} className="px-6 py-3 bg-green-500 text-white rounded-lg flex items-center gap-2"><Icon type="plus" /> Yeni Müşteri Oluştur</button>
                 <button onClick={exportAllJobsReport} className="px-6 py-3 bg-purple-600 text-white rounded-lg flex items-center gap-2"><Icon type="download" /> Tüm İşlerin Raporu</button>
               </div>
               <div className="ml-auto flex items-center gap-2">
@@ -1676,17 +1693,43 @@ function CreateJobModal({ products, onClose, onCreate, nextOrderNumber, initialD
     setOrderNum(nextOrderNumber());
   }, []);
 
-  const wizardSteps = [
-    { id: 'info', title: 'İş Bilgileri' },
-    { id: 'cooling', title: 'Soğutma Tipi' },  
-    { id: 'door', title: 'Kapı Türü' },
-    { id: 'glass', title: 'Cam Tipi' },
-    { id: 'coolingGroup', title: 'Soğutma Grubu' },
-    { id: 'cabinetSize', title: 'Dolap Ölçüsü' },
-    { id: 'case', title: 'Kasa Tipi' },
-    { id: 'extras', title: 'Ek Özellikler' },
-    { id: 'confirm', title: 'Onay' }
-  ];
+const wizardSteps = [
+  { id: 'info', title: ' ' },
+  { id: 'cabinetSize', title: 'Dolap Ölçüsü' },
+  { id: 'cooling', title: 'Soğutma Tipi' },
+  { id: 'glass', title: 'Cam Tipi' },
+  { id: 'door', title: 'Kapı Türü' },
+  { id: 'coolingGroup', title: 'Soğutma Grubu' },
+  { id: 'case', title: 'Kasa Tipi' },
+  { id: 'extras', title: 'Ek Özellikler' },
+  { id: 'confirm', title: 'Onay' }
+];
+
+// ✅ YENİ: Validation fonksiyonu ekle
+const canProceed = () => {
+  switch(step) {
+    case 0: // İş Bilgileri
+      return formData.customerName.trim() !== '' && formData.productType !== '';
+    case 1: // Dolap Ölçüsü
+      return cabinet.cabinetSize && cabinet.cabinetSize.trim() !== '';
+    case 2: // Soğutma Tipi
+      return cabinet.coolingType !== '';
+    case 3: // Cam Tipi
+      return cabinet.glassType !== '';
+    case 4: // Kapı Türü
+      return cabinet.doorType !== '';
+    case 5: // Soğutma Grubu
+      return cabinet.coolingGroup !== '';
+    case 6: // Kasa Tipi
+      return cabinet.caseType !== '';
+    case 7: // Ek Özellikler (opsiyonel)
+      return true;
+    case 8: // Onay
+      return true;
+    default:
+      return true;
+  }
+};
 
   const next = () => {
     if (step < wizardSteps.length - 1) setStep(step + 1);
@@ -1713,7 +1756,7 @@ function CreateJobModal({ products, onClose, onCreate, nextOrderNumber, initialD
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-lg p-6 w-full max-w-3xl max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between mb-4">
-          <h3 className="text-xl font-bold">Yeni İş Oluştur - {wizardSteps[step].title}</h3>
+          <h3 className="text-xl font-bold">Müşteri Bilgileri {wizardSteps[step].title}</h3>
           <button onClick={onClose} className="text-gray-500 hover:text-gray-700">✕</button>
         </div>
 
@@ -1767,93 +1810,93 @@ function CreateJobModal({ products, onClose, onCreate, nextOrderNumber, initialD
             </div>
           )}
 
-          {step === 1 && (
-            <div>
-              <p className="text-sm text-gray-600 mb-4">Soğutma tipini seçin:</p>
-              <div className="flex gap-3">
-                <label className={`flex-1 px-4 py-3 border-2 rounded-lg cursor-pointer transition ${cabinet.coolingType==='üfleme' ? 'bg-blue-50 border-blue-400':'border-gray-200 hover:border-gray-300'}`}>
-                  <input type="radio" name="cool" value="üfleme" checked={cabinet.coolingType==='üfleme'} onChange={e=>setCabinet({...cabinet, coolingType:e.target.value})} className="mr-2" />
-                  <span className="font-medium">Üfleme</span>
-                </label>
-                <label className={`flex-1 px-4 py-3 border-2 rounded-lg cursor-pointer transition ${cabinet.coolingType==='statik' ? 'bg-blue-50 border-blue-400':'border-gray-200 hover:border-gray-300'}`}>
-                  <input type="radio" name="cool" value="statik" checked={cabinet.coolingType==='statik'} onChange={e=>setCabinet({...cabinet, coolingType:e.target.value})} className="mr-2" />
-                  <span className="font-medium">Statik</span>
-                </label>
-              </div>
-            </div>
-          )}
+{step === 1 && (
+  <div>
+    <p className="text-sm text-gray-600 mb-4">Dolap ölçüsü ne olacak?</p>
+    <input 
+      value={cabinet.cabinetSize || ''} 
+      onChange={e=>setCabinet({...cabinet, cabinetSize:e.target.value})} 
+      className="w-full px-3 py-2 border rounded" 
+      placeholder="Ölçü Giriniz..."
+    />
+  </div>
+)}
 
-          {step === 2 && (
-            <div>
-              <p className="text-sm text-gray-600 mb-4">Kapı türünü seçin:</p>
-              <div className="flex gap-3">
-                <label className={`flex-1 px-4 py-3 border-2 rounded-lg cursor-pointer transition ${cabinet.doorType==='çarpma' ? 'bg-blue-50 border-blue-400':'border-gray-200 hover:border-gray-300'}`}>
-                  <input type="radio" name="door" value="çarpma" checked={cabinet.doorType==='çarpma'} onChange={e=>setCabinet({...cabinet, doorType:e.target.value})} className="mr-2" />
-                  <span className="font-medium">Çarpma Kapı</span>
-                </label>
-                <label className={`flex-1 px-4 py-3 border-2 rounded-lg cursor-pointer transition ${cabinet.doorType==='sürgü' ? 'bg-blue-50 border-blue-400':'border-gray-200 hover:border-gray-300'}`}>
-                  <input type="radio" name="door" value="sürgü" checked={cabinet.doorType==='sürgü'} onChange={e=>setCabinet({...cabinet, doorType:e.target.value})} className="mr-2" />
-                  <span className="font-medium">Sürgü Kapı</span>
-                </label>
-              </div>
-            </div>
-          )}
+{step === 2 && (
+  <div>
+    <p className="text-sm text-gray-600 mb-4">Soğutma tipini seçin:</p>
+    <div className="flex gap-3">
+      <label className={`flex-1 px-4 py-3 border-2 rounded-lg cursor-pointer transition ${cabinet.coolingType==='üfleme' ? 'bg-blue-50 border-blue-400':'border-gray-200 hover:border-gray-300'}`}>
+        <input type="radio" name="cool" value="üfleme" checked={cabinet.coolingType==='üfleme'} onChange={e=>setCabinet({...cabinet, coolingType:e.target.value})} className="mr-2" />
+        <span className="font-medium">Üfleme</span>
+      </label>
+      <label className={`flex-1 px-4 py-3 border-2 rounded-lg cursor-pointer transition ${cabinet.coolingType==='statik' ? 'bg-blue-50 border-blue-400':'border-gray-200 hover:border-gray-300'}`}>
+        <input type="radio" name="cool" value="statik" checked={cabinet.coolingType==='statik'} onChange={e=>setCabinet({...cabinet, coolingType:e.target.value})} className="mr-2" />
+        <span className="font-medium">Statik</span>
+      </label>
+    </div>
+  </div>
+)}
 
-          {step === 3 && (
-            <div>
-              <p className="text-sm text-gray-600 mb-4">Cam tipini seçin:</p>
-              <div className="flex gap-3 flex-wrap">
-                <label className={`px-4 py-3 border-2 rounded-lg cursor-pointer transition ${cabinet.glassType==='dik' ? 'bg-blue-50 border-blue-400':'border-gray-200 hover:border-gray-300'}`}>
-                  <input type="radio" name="glass" value="dik" checked={cabinet.glassType==='dik'} onChange={e=>setCabinet({...cabinet, glassType:e.target.value})} className="mr-2" />
-                  <span className="font-medium">Dik Cam</span>
-                </label>
-                <label className={`px-4 py-3 border-2 rounded-lg cursor-pointer transition ${cabinet.glassType==='oval' ? 'bg-blue-50 border-blue-400':'border-gray-200 hover:border-gray-300'}`}>
-                  <input type="radio" name="glass" value="oval" checked={cabinet.glassType==='oval'} onChange={e=>setCabinet({...cabinet, glassType:e.target.value})} className="mr-2" />
-                  <span className="font-medium">Oval Cam</span>
-                </label>
-                <label className={`px-4 py-3 border-2 rounded-lg cursor-pointer transition ${cabinet.glassType==='eğik' ? 'bg-blue-50 border-blue-400':'border-gray-200 hover:border-gray-300'}`}>
-                  <input type="radio" name="glass" value="eğik" checked={cabinet.glassType==='eğik'} onChange={e=>setCabinet({...cabinet, glassType:e.target.value})} className="mr-2" />
-                  <span className="font-medium">Eğik Cam</span>
-                </label>
-                <label className={`px-4 py-3 border-2 rounded-lg cursor-pointer transition ${cabinet.glassType==='akvaryum-düz' ? 'bg-blue-50 border-blue-400':'border-gray-200 hover:border-gray-300'}`}>
-                  <input type="radio" name="glass" value="akvaryum-düz" checked={cabinet.glassType==='akvaryum-düz'} onChange={e=>setCabinet({...cabinet, glassType:e.target.value})} className="mr-2" />
-                  <span className="font-medium">Akvaryum Tipi - Düz</span>
-                </label>
-                <label className={`px-4 py-3 border-2 rounded-lg cursor-pointer transition ${cabinet.glassType==='akvaryum-eğimli' ? 'bg-blue-50 border-blue-400':'border-gray-200 hover:border-gray-300'}`}>
-                  <input type="radio" name="glass" value="akvaryum-eğimli" checked={cabinet.glassType==='akvaryum-eğimli'} onChange={e=>setCabinet({...cabinet, glassType:e.target.value})} className="mr-2" />
-                  <span className="font-medium">Akvaryum Tipi - Eğimli</span>
-                </label>
-              </div>
-            </div>
-          )}
+{step === 3 && (
+  <div>
+    <p className="text-sm text-gray-600 mb-4">Cam tipini seçin:</p>
+    <div className="flex gap-3 flex-wrap">
+      <label className={`px-4 py-3 border-2 rounded-lg cursor-pointer transition ${cabinet.glassType==='dik' ? 'bg-blue-50 border-blue-400':'border-gray-200 hover:border-gray-300'}`}>
+        <input type="radio" name="glass" value="dik" checked={cabinet.glassType==='dik'} onChange={e=>setCabinet({...cabinet, glassType:e.target.value})} className="mr-2" />
+        <span className="font-medium">Dik Cam</span>
+      </label>
+      <label className={`px-4 py-3 border-2 rounded-lg cursor-pointer transition ${cabinet.glassType==='oval' ? 'bg-blue-50 border-blue-400':'border-gray-200 hover:border-gray-300'}`}>
+        <input type="radio" name="glass" value="oval" checked={cabinet.glassType==='oval'} onChange={e=>setCabinet({...cabinet, glassType:e.target.value})} className="mr-2" />
+        <span className="font-medium">Oval Cam</span>
+      </label>
+      <label className={`px-4 py-3 border-2 rounded-lg cursor-pointer transition ${cabinet.glassType==='eğik' ? 'bg-blue-50 border-blue-400':'border-gray-200 hover:border-gray-300'}`}>
+        <input type="radio" name="glass" value="eğik" checked={cabinet.glassType==='eğik'} onChange={e=>setCabinet({...cabinet, glassType:e.target.value})} className="mr-2" />
+        <span className="font-medium">Eğik Cam</span>
+      </label>
+      <label className={`px-4 py-3 border-2 rounded-lg cursor-pointer transition ${cabinet.glassType==='akvaryum-düz' ? 'bg-blue-50 border-blue-400':'border-gray-200 hover:border-gray-300'}`}>
+        <input type="radio" name="glass" value="akvaryum-düz" checked={cabinet.glassType==='akvaryum-düz'} onChange={e=>setCabinet({...cabinet, glassType:e.target.value})} className="mr-2" />
+        <span className="font-medium">Akvaryum Tipi - Düz</span>
+      </label>
+      <label className={`px-4 py-3 border-2 rounded-lg cursor-pointer transition ${cabinet.glassType==='akvaryum-eğimli' ? 'bg-blue-50 border-blue-400':'border-gray-200 hover:border-gray-300'}`}>
+        <input type="radio" name="glass" value="akvaryum-eğimli" checked={cabinet.glassType==='akvaryum-eğimli'} onChange={e=>setCabinet({...cabinet, glassType:e.target.value})} className="mr-2" />
+        <span className="font-medium">Akvaryum Tipi - Eğimli</span>
+      </label>
+    </div>
+  </div>
+)}
 
-          {step === 4 && (
-            <div>
-              <p className="text-sm text-gray-600 mb-4">Soğutma grubu nerede olacak?</p>
-              <div className="flex gap-3">
-                <label className={`flex-1 px-4 py-3 border-2 rounded-lg cursor-pointer transition ${cabinet.coolingGroup==='içeride' ? 'bg-blue-50 border-blue-400':'border-gray-200 hover:border-gray-300'}`}>
-                  <input type="radio" name="coolingGroup" value="içeride" checked={cabinet.coolingGroup==='içeride'} onChange={e=>setCabinet({...cabinet, coolingGroup:e.target.value})} className="mr-2" />
-                  <span className="font-medium">1 - İçeride</span>
-                </label>
-                <label className={`flex-1 px-4 py-3 border-2 rounded-lg cursor-pointer transition ${cabinet.coolingGroup==='dışarıda' ? 'bg-blue-50 border-blue-400':'border-gray-200 hover:border-gray-300'}`}>
-                  <input type="radio" name="coolingGroup" value="dışarıda" checked={cabinet.coolingGroup==='dışarıda'} onChange={e=>setCabinet({...cabinet, coolingGroup:e.target.value})} className="mr-2" />
-                  <span className="font-medium">2 - Dışarıda</span>
-                </label>
-              </div>
-            </div>
-          )}
+{step === 4 && (
+  <div>
+    <p className="text-sm text-gray-600 mb-4">Kapı türünü seçin:</p>
+    <div className="flex gap-3">
+      <label className={`flex-1 px-4 py-3 border-2 rounded-lg cursor-pointer transition ${cabinet.doorType==='çarpma' ? 'bg-blue-50 border-blue-400':'border-gray-200 hover:border-gray-300'}`}>
+        <input type="radio" name="door" value="çarpma" checked={cabinet.doorType==='çarpma'} onChange={e=>setCabinet({...cabinet, doorType:e.target.value})} className="mr-2" />
+        <span className="font-medium">Çarpma Kapı</span>
+      </label>
+      <label className={`flex-1 px-4 py-3 border-2 rounded-lg cursor-pointer transition ${cabinet.doorType==='sürgü' ? 'bg-blue-50 border-blue-400':'border-gray-200 hover:border-gray-300'}`}>
+        <input type="radio" name="door" value="sürgü" checked={cabinet.doorType==='sürgü'} onChange={e=>setCabinet({...cabinet, doorType:e.target.value})} className="mr-2" />
+        <span className="font-medium">Sürgü Kapı</span>
+      </label>
+    </div>
+  </div>
+)}
 
-          {step === 5 && (
-            <div>
-              <p className="text-sm text-gray-600 mb-4">Dolap ölçüsü ne olacak?</p>
-              <input 
-                value={cabinet.cabinetSize || ''} 
-                onChange={e=>setCabinet({...cabinet, cabinetSize:e.target.value})} 
-                className="w-full px-3 py-2 border rounded" 
-                placeholder="Ölçü Giriniz..."
-              />
-            </div>
-          )}
+{step === 5 && (
+  <div>
+    <p className="text-sm text-gray-600 mb-4">Soğutma grubu nerede olacak?</p>
+    <div className="flex gap-3">
+      <label className={`flex-1 px-4 py-3 border-2 rounded-lg cursor-pointer transition ${cabinet.coolingGroup==='içeride' ? 'bg-blue-50 border-blue-400':'border-gray-200 hover:border-gray-300'}`}>
+        <input type="radio" name="coolingGroup" value="içeride" checked={cabinet.coolingGroup==='içeride'} onChange={e=>setCabinet({...cabinet, coolingGroup:e.target.value})} className="mr-2" />
+        <span className="font-medium">1 - İçeride</span>
+      </label>
+      <label className={`flex-1 px-4 py-3 border-2 rounded-lg cursor-pointer transition ${cabinet.coolingGroup==='dışarıda' ? 'bg-blue-50 border-blue-400':'border-gray-200 hover:border-gray-300'}`}>
+        <input type="radio" name="coolingGroup" value="dışarıda" checked={cabinet.coolingGroup==='dışarıda'} onChange={e=>setCabinet({...cabinet, coolingGroup:e.target.value})} className="mr-2" />
+        <span className="font-medium">2 - Dışarıda</span>
+      </label>
+    </div>
+  </div>
+)}
 
           {step === 6 && (
             <div>
@@ -1923,13 +1966,23 @@ function CreateJobModal({ products, onClose, onCreate, nextOrderNumber, initialD
           )}
         </div>
 
-        <div className="mt-6 flex justify-between items-center">
+<div className="mt-6 flex justify-between items-center">
           <button onClick={onClose} className="px-4 py-2 bg-gray-100 rounded hover:bg-gray-200">İptal</button>
           <div className="flex gap-2">
             {step > 0 && <button onClick={back} className="px-4 py-2 bg-gray-200 rounded hover:bg-gray-300">Geri</button>}
-            {step < wizardSteps.length - 1 && step > 0 && <button onClick={skip} className="px-4 py-2 bg-yellow-100 text-yellow-700 rounded hover:bg-yellow-200">Atla</button>}
-            {step < wizardSteps.length - 1 ? (
-              <button onClick={next} className="px-6 py-2 bg-blue-500 text-white rounded hover:bg-blue-600">İleri</button>
+            {/* ✅ Atla butonu kaldırıldı */}
+{step < wizardSteps.length - 1 ? (
+              <button 
+                onClick={next} 
+                disabled={!canProceed()}
+                className={`px-6 py-2 rounded transition ${
+                  canProceed() 
+                    ? 'bg-blue-500 text-white hover:bg-blue-600' 
+                    : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                }`}
+              >
+                İleri
+              </button>
             ) : (
               <button onClick={handleCreate} className="px-6 py-2 bg-green-500 text-white rounded hover:bg-green-600">İş Oluştur</button>
             )}
@@ -3123,8 +3176,33 @@ function MalzemeTab({ job, updateJob, suppliers, onExportSupplier, onExportAll }
     suppliers.reduce((acc, s) => ({ ...acc, [s]: true }), {})
   );
   
+  // ✅ Temin durumu özeti hesapla
+  const totalItems = Object.values(job.supplierOrders || {}).flat().length;
+  const suppliedItems = Object.values(job.supplierOrders || {}).flat().filter(item => item.supplied).length;
+  
+  
   return (
     <div className="space-y-4">
+      {/* ✅ Özet banner */}
+      {totalItems > 0 && (
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <div className="text-sm">
+              <span className="font-semibold">Toplam Ürün:</span> {totalItems}
+            </div>
+            <div className="text-sm">
+              <span className="font-semibold text-green-600">Temin Edildi:</span> {suppliedItems}
+            </div>
+            <div className="text-sm">
+              <span className="font-semibold text-orange-600">Bekliyor:</span> {totalItems - suppliedItems}
+            </div>
+          </div>
+          <div className="text-xs text-gray-600">
+            %{Math.round((suppliedItems / totalItems) * 100)} tamamlandı
+          </div>
+        </div>
+      )}
+      
       <div className="flex items-center justify-between mb-4">
         <div className="text-sm text-gray-700">Tedarikçi bazlı malzeme listesi</div>
         <button onClick={() => onExportAll(job.supplierOrders || {}, job, 'Malzeme')} className="px-4 py-2 bg-indigo-600 text-white rounded flex items-center gap-2"><Icon type="download" /> Tümünü İndir (Excel)</button>
@@ -3158,8 +3236,32 @@ function LazerTab({ job, updateJob, lazerSuppliers, onExportSupplier, onExportAl
     lazerSuppliers.reduce((acc, s) => ({ ...acc, [s]: true }), {})
   );
   
+  // ✅ Temin durumu özeti hesapla
+  const totalItems = Object.values(job.lazerOrders || {}).flat().length;
+  const suppliedItems = Object.values(job.lazerOrders || {}).flat().filter(item => item.supplied).length;
+  
   return (
     <div className="space-y-4">
+      {/* ✅ Özet banner */}
+      {totalItems > 0 && (
+        <div className="bg-purple-50 border border-purple-200 rounded-lg p-3 flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <div className="text-sm">
+              <span className="font-semibold">Toplam Ürün:</span> {totalItems}
+            </div>
+            <div className="text-sm">
+              <span className="font-semibold text-green-600">Temin Edildi:</span> {suppliedItems}
+            </div>
+            <div className="text-sm">
+              <span className="font-semibold text-orange-600">Bekliyor:</span> {totalItems - suppliedItems}
+            </div>
+          </div>
+          <div className="text-xs text-gray-600">
+            %{Math.round((suppliedItems / totalItems) * 100)} tamamlandı
+          </div>
+        </div>
+      )}
+      
       <div className="flex items-center justify-between mb-4">
         <div className="text-sm text-gray-700">Lazer kesim firmaları - malzeme listesi</div>
         <button onClick={() => onExportAll(job.lazerOrders || {}, job, 'Lazer')} className="px-4 py-2 bg-purple-600 text-white rounded flex items-center gap-2"><Icon type="download" /> Tümünü İndir (Excel)</button>
@@ -3288,136 +3390,176 @@ function SupplierItemRow({ item, onUpdate, onDelete, job }) {
     loadProduct();
   }, [item.product, job]);
 
-  const handleStockToggle = async (e) => {
-    if (!supabaseProduct) return;
-    
-    const checked = e.target.checked;
-    
-    if(checked) {
-      if(supabaseProduct.quantity < 1) {
-        setConfirmAction({
-          type: 'insufficient',
-          message: `Yetersiz stok!\n\nÜrün: ${supabaseProduct.product_name}\nMevcut Stok: ${supabaseProduct.quantity} adet\n\nStok miktarı yetersiz.`
-        });
-        setShowConfirm(true);
-        return;
-      }
-      
+// ✅ Temin edildi işaretleme
+const handleSuppliedToggle = (e) => {
+  const checked = e.target.checked;
+  onUpdate({...local, supplied: checked});
+};
+
+const handleStockToggle = async (e) => {
+  if (!supabaseProduct) return;
+  
+  const checked = e.target.checked;
+  
+  if(checked) {
+    if(supabaseProduct.quantity < 1) {
       setConfirmAction({
-        type: 'decrease',
-        message: `Stoktan eksiltilecek:\n\nÜrün: ${supabaseProduct.product_name}\nMevcut Stok: ${supabaseProduct.quantity} adet\nEksilecek: 1 adet\nKalan: ${supabaseProduct.quantity - 1} adet\n\nDevam edilsin mi?`,
-        onConfirm: async () => {
-          const jobName = job.orderNumber || job.customerName || job.id;
-          const success = await updateStock(supabaseProduct.id, supabaseProduct.quantity - 1, supabaseProduct.quantity, jobName, 'azaltma');
-          
-          if(success) {
-            setUseStock(true);
-            supabaseProduct.quantity = supabaseProduct.quantity - 1;
-            setSupabaseProduct({...supabaseProduct});
-            onUpdate({...local, useStock: true});
-            setConfirmAction({
-              type: 'success',
-              message: `✅ Stoktan 1 adet düşüldü.\nKalan: ${supabaseProduct.quantity} adet`
-            });
-            setShowConfirm(true);
-          } else {
-            setConfirmAction({
-              type: 'error',
-              message: '❌ Stok güncellenemedi!\n\nİnternet bağlantınızı kontrol edin.'
-            });
-            setShowConfirm(true);
-          }
-        }
+        type: 'insufficient',
+        message: `Yetersiz stok!\n\nÜrün: ${supabaseProduct.product_name}\nMevcut Stok: ${supabaseProduct.quantity} adet\n\nStok miktarı yetersiz.`
       });
       setShowConfirm(true);
-    } else {
-      setConfirmAction({
-        type: 'increase',
-        message: `Stoğa geri eklenecek:\n\nÜrün: ${supabaseProduct.product_name}\nŞu anki Stok: ${supabaseProduct.quantity} adet\nEklenecek: 1 adet\nYeni Stok: ${supabaseProduct.quantity + 1} adet\n\nDevam edilsin mi?`,
-        onConfirm: async () => {
-          const jobName = job.orderNumber || job.customerName || job.id;
-          const success = await updateStock(supabaseProduct.id, supabaseProduct.quantity + 1, supabaseProduct.quantity, jobName, 'ekleme');
-          
-          if(success) {
+      return;
+    }
+    
+    setConfirmAction({
+      type: 'decrease',
+      message: `Stoktan eksiltilecek:\n\nÜrün: ${supabaseProduct.product_name}\nMevcut Stok: ${supabaseProduct.quantity} adet\nEksilecek: 1 adet\nKalan: ${supabaseProduct.quantity - 1} adet\n\nDevam edilsin mi?`,
+      onConfirm: async () => {
+        const jobName = job.orderNumber || job.customerName || job.id;
+        const success = await updateStock(supabaseProduct.id, supabaseProduct.quantity - 1, supabaseProduct.quantity, jobName, 'azaltma');
+        
+        if(success) {
+          setUseStock(true);
+          supabaseProduct.quantity = supabaseProduct.quantity - 1;
+          setSupabaseProduct({...supabaseProduct});
+          onUpdate({...local, useStock: true, supplied: true});
+          setLocal(prev => ({...prev, useStock: true, supplied: true}));
+          setConfirmAction({
+            type: 'success',
+            message: `✅ Stoktan 1 adet düşüldü ve temin edildi olarak işaretlendi.\nKalan: ${supabaseProduct.quantity} adet`
+          });
+          setShowConfirm(true);
+        } else {
+          setConfirmAction({
+            type: 'error',
+            message: '❌ Stok güncellenemedi!\n\nİnternet bağlantınızı kontrol edin.'
+          });
+          setShowConfirm(true);
+        }
+      }
+    });
+    setShowConfirm(true);
+  } else {
+    setConfirmAction({
+      type: 'increase',
+      message: `Stoğa geri eklenecek:\n\nÜrün: ${supabaseProduct.product_name}\nŞu anki Stok: ${supabaseProduct.quantity} adet\nEklenecek: 1 adet\nYeni Stok: ${supabaseProduct.quantity + 1} adet\n\nDevam edilsin mi?`,
+      onConfirm: async () => {
+        const jobName = job.orderNumber || job.customerName || job.id;
+        const success = await updateStock(supabaseProduct.id, supabaseProduct.quantity + 1, supabaseProduct.quantity, jobName, 'ekleme');
+        
+if(success) {
             setUseStock(false);
             supabaseProduct.quantity = supabaseProduct.quantity + 1;
             setSupabaseProduct({...supabaseProduct});
-            onUpdate({...local, useStock: false});
-            setConfirmAction({
-              type: 'success',
-              message: `✅ Stoğa 1 adet geri eklendi.\nYeni stok: ${supabaseProduct.quantity} adet`
-            });
-            setShowConfirm(true);
-          } else {
-            setConfirmAction({
-              type: 'error',
-              message: '❌ Stok güncellenemedi!\n\nİnternet bağlantınızı kontrol edin.'
-            });
-            setShowConfirm(true);
-          }
+            // ✅ Stoktan kaldırıldığında temin edildi işaretini de kaldır
+            onUpdate({...local, useStock: false, supplied: false});
+            setLocal(prev => ({...prev, useStock: false, supplied: false}));
+          setConfirmAction({
+            type: 'success',
+            message: `✅ Stoğa 1 adet geri eklendi.\nYeni stok: ${supabaseProduct.quantity} adet`
+          });
+          setShowConfirm(true);
+        } else {
+          setConfirmAction({
+            type: 'error',
+            message: '❌ Stok güncellenemedi!\n\nİnternet bağlantınızı kontrol edin.'
+          });
+          setShowConfirm(true);
         }
-      });
-      setShowConfirm(true);
-    }
-  };
+      }
+    });
+    setShowConfirm(true);
+  }
+};
 
-  return (
-    <>
-      <div className="flex items-center gap-2 bg-gray-50 p-3 rounded">
-        {editing ? (
-          <div className="flex-1 grid grid-cols-3 gap-2">
-            <input className="px-2 py-1 border rounded" placeholder="Ürün" value={local.product || ''} onChange={(e)=>setLocal({...local, product:e.target.value})} />
-            <input className="px-2 py-1 border rounded" placeholder="Açıklama" value={local.description || ''} onChange={(e)=>setLocal({...local, description:e.target.value})} />
-            <input type="number" className="px-2 py-1 border rounded" placeholder="Adet" value={local.qty || 1} onChange={(e)=>setLocal({...local, qty: Number(e.target.value)})} />
-          </div>
-        ) : (
-          <div className="flex-1 grid grid-cols-3 gap-2 items-center">
-            <div className="font-medium">{item.product}</div>
-            <div className="text-sm text-gray-600">{item.description}</div>
-            <div className="text-sm">Adet: <strong>{item.qty || 1}</strong></div>
-          </div>
-        )}
-
-        <div className="flex gap-2 items-center">
-          {supabaseProduct && !editing && (
-            <label className="flex items-center gap-2 text-xs cursor-pointer px-2 py-1 bg-gray-50 rounded border hover:bg-gray-100">
-              <input 
-                type="checkbox" 
-                checked={useStock} 
-                onChange={handleStockToggle}
-                className="w-4 h-4"
-                disabled={loadingProduct}
-              />
-              <span className={useStock ? 'text-green-600 font-semibold' : 'text-gray-600'}>
-                {useStock ? 'Stoktan Kullanıldı' : 'Stoktan Kullan'}
-              </span>
-            </label>
-          )}
-          {editing ? (
-            <button onClick={() => { setEditing(false); onUpdate(local); }} className="px-3 py-1 bg-green-500 text-white rounded text-sm">Kaydet</button>
-          ) : (
-            <button onClick={() => setEditing(true)} className="px-2 py-1 bg-yellow-100 rounded text-sm">Düzenle</button>
-          )}
-          <button onClick={onDelete} className="px-2 py-1 bg-red-100 text-red-600 rounded"><Icon type="trash" className="w-4 h-4"/></button>
-        </div>
-      </div>
-
-      {showConfirm && (
-        <CustomDialog
-          message={confirmAction.message}
-          onConfirm={() => {
-            if(confirmAction.onConfirm) {
-              confirmAction.onConfirm();
-            } else {
-              setShowConfirm(false);
-            }
-          }}
-          onCancel={() => setShowConfirm(false)}
-          showCancel={confirmAction.type === 'decrease' || confirmAction.type === 'increase'}
-        />
+return (
+  <>
+    <div className={`flex items-center gap-3 p-3 rounded transition-all ${
+      local.supplied 
+        ? 'bg-green-50 border-2 border-green-200 opacity-60' 
+        : 'bg-gray-50'
+    }`}>
+      {/* ✅ Temin Edildi Checkbox - EN SOLDA */}
+      {!editing && (
+        <label 
+          className="flex items-center cursor-pointer group shrink-0" 
+          title={local.supplied ? "✓ Temin edildi" : "Temin edilmedi - İşaretle"}
+        >
+          <input 
+            type="checkbox" 
+            checked={local.supplied || false} 
+            onChange={handleSuppliedToggle}
+            className="w-5 h-5 cursor-pointer accent-green-600"
+          />
+        </label>
       )}
-    </>
-  );
+      
+      {editing ? (
+        <div className="flex-1 grid grid-cols-3 gap-2">
+          <input className="px-2 py-1 border rounded" placeholder="Ürün" value={local.product || ''} onChange={(e)=>setLocal({...local, product:e.target.value})} />
+          <input className="px-2 py-1 border rounded" placeholder="Açıklama" value={local.description || ''} onChange={(e)=>setLocal({...local, description:e.target.value})} />
+          <input type="number" className="px-2 py-1 border rounded" placeholder="Adet" value={local.qty || 1} onChange={(e)=>setLocal({...local, qty: Number(e.target.value)})} />
+        </div>
+      ) : (
+        <div className="flex-1 grid grid-cols-3 gap-2 items-center">
+          <div className={`font-medium ${local.supplied ? 'line-through text-gray-400' : ''}`}>
+            {item.product}
+          </div>
+          <div className="text-sm text-gray-600">{item.description}</div>
+          <div className="text-sm">Adet: <strong>{item.qty || 1}</strong></div>
+        </div>
+      )}
+
+      <div className="flex gap-2 items-center shrink-0">
+        {/* ✅ Stoktan Kullan Checkbox - Düzenle butonunun yanında */}
+        {supabaseProduct && !editing && (
+          <label className="flex items-center gap-2 text-xs cursor-pointer px-2 py-1 bg-purple-50 rounded border border-purple-200 hover:bg-purple-100 transition">
+            <input 
+              type="checkbox" 
+              checked={useStock} 
+              onChange={(e) => {
+                const checked = e.target.checked;
+                handleStockToggle(e);
+                // ✅ Stoktan kullanıldığında otomatik temin edildi işaretle
+                if(checked && !local.supplied) {
+                  // handleStockToggle içinde zaten onUpdate çağrılıyor, burada sadece local state'i güncelle
+                  setLocal(prev => ({...prev, supplied: true}));
+                }
+              }}
+              className="w-4 h-4"
+              disabled={loadingProduct}
+            />
+            <span className={useStock ? 'text-purple-700 font-semibold' : 'text-purple-600'}>
+              {useStock ? '📦 Kullanıldı' : '📦 Stoktan'}
+            </span>
+          </label>
+        )}
+        
+        {editing ? (
+          <button onClick={() => { setEditing(false); onUpdate(local); }} className="px-3 py-1 bg-green-500 text-white rounded text-sm">Kaydet</button>
+        ) : (
+          <button onClick={() => setEditing(true)} className="px-2 py-1 bg-yellow-100 rounded text-sm">Düzenle</button>
+        )}
+        <button onClick={onDelete} className="px-2 py-1 bg-red-100 text-red-600 rounded"><Icon type="trash" className="w-4 h-4"/></button>
+      </div>
+    </div>
+
+    {showConfirm && (
+      <CustomDialog
+        message={confirmAction.message}
+        onConfirm={() => {
+          if(confirmAction.onConfirm) {
+            confirmAction.onConfirm();
+          } else {
+            setShowConfirm(false);
+          }
+        }}
+        onCancel={() => setShowConfirm(false)}
+        showCancel={confirmAction.type === 'decrease' || confirmAction.type === 'increase'}
+      />
+    )}
+  </>
+);
 }
 
 /* ✅ ---------- UPDATED: Add Supplier Product with Supabase ---------- */
@@ -3450,10 +3592,15 @@ function AddSupplierProduct({ supplier, job, onAdd }) {
     }
   };
 
-  const addManual = async () => {
+const addManual = async () => {
     if(!manualProduct.product.trim()) return;
     
-    onAdd(manualProduct);
+    // ✅ Açıklama ve adet otomatik olarak ayarlanıyor
+    onAdd({
+      product: manualProduct.product.trim(),
+      description: '',
+      qty: 1
+    });
     
     if(showSaveToSupabase) {
       try {
@@ -3464,7 +3611,7 @@ function AddSupplierProduct({ supplier, job, onAdd }) {
             barcode: 'MANUAL-' + Date.now(),
             quantity: 0,
             added_by: 'Web'
-          })
+          })    
         });
         setDialog({
           message: 'Ürün stok listesine eklendi!',
@@ -3505,11 +3652,10 @@ function AddSupplierProduct({ supplier, job, onAdd }) {
             + Yeni Ürün Ekle
           </button>
         </div>
-      ) : (
+) : (
         <div className="space-y-2">
           <input placeholder="Ürün adı *" value={manualProduct.product} onChange={e=>setManualProduct({...manualProduct, product:e.target.value})} className="w-full px-3 py-2 border rounded"/>
-          <input placeholder="Açıklama" value={manualProduct.description} onChange={e=>setManualProduct({...manualProduct, description:e.target.value})} className="w-full px-3 py-2 border rounded"/>
-          <input type="number" placeholder="Adet" value={manualProduct.qty} onChange={e=>setManualProduct({...manualProduct, qty:Number(e.target.value)})} className="w-full px-3 py-2 border rounded"/>
+          {/* ✅ Açıklama ve Adet inputları kaldırıldı */}
           
           <label className="flex items-center gap-2 text-sm">
             <input type="checkbox" checked={showSaveToSupabase} onChange={e=>setShowSaveToSupabase(e.target.checked)}/>
